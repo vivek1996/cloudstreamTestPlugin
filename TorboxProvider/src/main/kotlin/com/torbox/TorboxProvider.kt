@@ -58,33 +58,36 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
         val data: TorboxSearchData?
     )
 
-    // More detailed Torrent Info data classes based on typical torrent structures
-    data class TorrentFile(
-        val path: String?, // Usually a list of path components
-        val name: String?, // Derived from path or separate
-        val length: Long?
-        // Potentially more fields like id if provided by API for file-specific operations
+    // Updated Torrent Info data classes based on provided API doc
+    data class TorrentInfoFile( // Renamed from TorrentFile and fields adjusted
+        val name: String?,
+        val size: Long? // Was length, renamed to size as per API doc
+        // path is part of name in API doc like "Big Buck Bunny/Big Buck Bunny.en.srt"
     )
 
     data class TorrentInfoData(
         val name: String?,
-        val hash: String?, // Infohash
-        val magnet: String?,
-        val files: List<TorrentFile>?,
-        val total_size: Long?,
-        val comment: String?,
-        val created_date: Long?, // Timestamp
-        // Add any other relevant fields from Torbox's /torrentinfo response
-        val error: String? = null, // For API error messages
-        val message: String? = null // For API messages
+        val hash: String?,
+        // magnet is not in the torrentinfo response sample, but might be useful if present elsewhere
+        // val magnet: String?,
+        val size: Long?, // Total size of the torrent
+        val trackers: List<String>?, // List of tracker URLs
+        val seeds: Int?,
+        val peers: Int?,
+        val files: List<TorrentInfoFile>?,
+        // comment and created_date are not in the provided sample, removing for now
+        // val comment: String?,
+        // val created_date: Long?, // Timestamp
+        val error: String? = null, // Kept for internal error tracking if needed by parsing logic
+        val message: String? = null // Kept for internal message tracking if needed by parsing logic
     )
 
-    // Assuming a generic success/data structure for /torrentinfo
+    // Updated to match the /torrentinfo response structure from problem description
     data class TorboxTorrentInfoResponse(
-        val success: Boolean?, // Some APIs use this
-        val data: TorrentInfoData?,
-        val error: String? = null, // API might return error at top level
-        val message: String? = null // Or message at top level
+        val success: Boolean?,
+        val error: String?, // Error message from API
+        val detail: String?, // Detail message from API
+        val data: TorrentInfoData?
     )
 
     // Data classes for /asynccreatetorrent
@@ -129,19 +132,23 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
         val error_message: String?
     )
 
-    // Data class for /requestdl response
+    // Updated Data class for /requestdl response as per problem description
     data class RequestDlResponse(
         val success: Boolean?,
-        val url: String?, // The direct download/stream link
-        val message: String?,
-        val error: String?,
-        val detail: String?
+        val error: String?, // Error message from API
+        val detail: String?, // Detail message from API (can be success or error detail)
+        val data: String? // This field now holds the download URL
+        // val message: String? // Removed as 'detail' seems to cover this based on samples
     )
 
 
     private fun getApiKey(): String? {
         return plugin.activity?.getSharedPreferences(SettingsFragment.PREFS_FILE, Context.MODE_PRIVATE)
             ?.getString(SettingsFragment.TORBOX_API_KEY, null)
+    }
+
+    private fun getAuthHeaders(apiKey: String): Map<String, String> {
+        return mapOf("Authorization" to "Bearer $apiKey")
     }
 
     // This function gets called when you search for something
@@ -156,11 +163,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             return emptyList()
         }
 
-        // The API documentation states "all request" for apikey, usually in headers.
-        // Common patterns are "Authorization: Bearer <key>" or "X-API-KEY: <key>"
-        // The openapi.json should specify this under "securitySchemes" and "security".
-        // Assuming "X-API-Key" for now as it's common. This needs to be verified.
-        val headers = mapOf("X-API-Key" to apiKey)
+        val headers = getAuthHeaders(apiKey)
         val searchUrl = "https://search-api.torbox.app/torrents/search/$query"
 
         // Parameters as per Torbox API documentation
@@ -242,7 +245,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             // Notify user or log
             return null
         }
-        val headers = mapOf("X-API-Key" to apiKey) // Assuming X-API-Key, verify
+
 
         if (url.startsWith("magnet:")) {
             // Try to parse display name (dn) from magnet for a better title
@@ -263,70 +266,66 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             val hash = url.removePrefix("hash:")
             val torrentInfoUrl = "https://api.torbox.app/v1/api/torrents/torrentinfo"
             val params = mapOf("hash" to hash)
+            val authHeaders = getAuthHeaders(apiKey) // Added this line
 
             try {
-                val response = app.get(torrentInfoUrl, params = params, headers = headers).text
+                val response = app.get(torrentInfoUrl, params = params, headers = authHeaders).text // Use authHeaders
                 // The openapi.json for /v1/api/torrents/torrentinfo doesn't specify response schema.
                 // Assuming it's similar to TorboxTorrentInfoResponse or directly TorrentInfoData
                 // Let's try parsing as TorrentInfoData first, if it's nested under "data", adjust.
                 // It's common for APIs to return the object directly or under a "data" field.
-                // For robustness, one might try parsing both ways or use a more flexible parsing.
+                // Parse the response using the updated TorboxTorrentInfoResponse structure
+                val apiResponse = parseJson<TorboxTorrentInfoResponse>(response)
+                val torrentInfo = apiResponse.data
 
-                var torrentInfo: TorrentInfoData? = null
-                try {
-                    // Attempt 1: response is TorboxTorrentInfoResponse (with success field etc.)
-                    val apiResponse = parseJson<TorboxTorrentInfoResponse>(response)
-                    if (apiResponse.success == true || (apiResponse.success == null && apiResponse.data != null) ) { // Handle cases where success might be implicit
-                        torrentInfo = apiResponse.data
-                    } else {
-                         // Log: apiResponse.message or apiResponse.error
-                    }
-                } catch (e: Exception) {
-                    // Attempt 2: response is directly TorrentInfoData
-                    try {
-                        torrentInfo = parseJson<TorrentInfoData>(response)
-                    } catch (e2: Exception) {
-                        // Log parsing failure for both attempts
-                        return null
-                    }
-                }
-
-                if (torrentInfo == null || (!torrentInfo.error.isNullOrEmpty() && torrentInfo.magnet.isNullOrEmpty())) {
-                     // Log: torrentInfo.error or torrentInfo.message
-                    return null // Failed to get info or critical info (magnet) missing
+                if (apiResponse.success != true || torrentInfo == null) {
+                    // Log error from apiResponse.error or apiResponse.detail
+                    // plugin.activity?.runOnUiThread {
+                    //     CommonActivity.showToast(plugin.activity, "Torbox torrent info error: ${apiResponse.error ?: apiResponse.detail}", Toast.LENGTH_LONG)
+                    // }
+                    return null // Failed to get info or critical info missing
                 }
 
                 val torrentName = torrentInfo.name ?: "Torrent for $hash"
-                val magnetLink = torrentInfo.magnet
+                // Construct magnet link as it's not in the /torrentinfo response
+                // Adding dn (display name) is good practice for magnet links.
+                val magnetLink = "magnet:?xt=urn:btih:${hash}&dn=${java.net.URLEncoder.encode(torrentName, "UTF-8")}"
 
-                if (magnetLink.isNullOrEmpty()) {
-                    // If magnet is still missing even after torrentinfo call, we can't proceed easily
-                    return null
-                }
 
-                // We got torrent info, including a magnet. Now create a TorrentLoadResponse.
-                // The 'url' of LoadResponse should be something unique for this item,
-                // using the magnet link itself is consistent.
+                // We got torrent info. Now create a TorrentLoadResponse.
+                // The 'url' of LoadResponse should be something unique for this item.
+                // Using the magnet link itself is consistent.
                 return newTorrentLoadResponse(
                     name = torrentName,
-                    url = magnetLink, // Use the fetched magnet link as the identifier/url
+                    url = magnetLink, // Use the constructed magnet link as the identifier/url
                     type = TvType.Torrent, // Or try to infer better if more info in TorrentInfoData
                     link = magnetLink // This is what's passed to loadLinks
                 ) {
                     // Populate other fields if available from torrentInfo
                     // this.posterUrl = ... (if available)
                     // this.year = ... (if available)
-                    // this.plot = torrentInfo.comment
-                    // Add episodes if it's a show and file list allows determining episodes
-                    // For now, just basic info.
-                    if (!torrentInfo.files.isNullOrEmpty()) {
-                        this.dataUrl = magnetLink // Redundant with link, but some LoadResponse might use it
-                        // If you want to list files here (though usually done in loadLinks or after download starts)
-                        // torrentInfo.files.map { file -> newEpisode(file.name) {this.data = file.path_or_id_for_download } }
-                    }
+                    // this.plot = ...
+                    this.torrentInfo?.size = torrentInfo.size
+                    this.torrentInfo?.seeds = torrentInfo.seeds
+                    this.torrentInfo?.peers = torrentInfo.peers
+                    // Example of how files could be potentially mapped if LoadResponse supported it directly here
+                    // this.episodes = torrentInfo.files?.mapIndexedNotNull { index, file ->
+                    //    Episode(
+                    //        data = file.name ?: "File ${index + 1}", // Or some unique identifier for the file
+                    //        name = file.name ?: "File ${index + 1}",
+                    //        episode = index + 1,
+                    //        posterUrl = null,
+                    //        rating = null,
+                    //        description = null
+                    //    ).apply { this.fileSize = file.size }
+                    // }
                 }
             } catch (e: Exception) {
                 // Log network or parsing error for /torrentinfo
+                // e.printStackTrace()
+                // plugin.activity?.runOnUiThread {
+                //    CommonActivity.showToast(plugin.activity, "Failed to fetch torrent info from Torbox: ${e.message}", Toast.LENGTH_LONG)
+                // }
                 return null
             }
         }
@@ -344,7 +343,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             // Log or notify: API key missing
             return false
         }
-        val headers = mapOf("X-API-Key" to apiKey) // Verify this header key
+        val authHeaders = getAuthHeaders(apiKey) // Use authHeaders
 
         var torrentId: Int? = null
 
@@ -361,7 +360,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             val requestBody = AsyncCreateTorrentRequest(magnet = data)
             val responseText = app.post(
                 addTorrentUrl,
-                headers = headers,
+                headers = authHeaders, // Use authHeaders
                 json = requestBody // Sending as JSON
             ).text
 
@@ -391,7 +390,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
 
             val myListUrl = "https://api.torbox.app/v1/api/torrents/mylist"
             val params = mapOf("id" to torrentId.toString()) // Filter by our torrent ID
-            val myListResponseText = app.get(myListUrl, headers = headers, params = params).text
+            val myListResponseText = app.get(myListUrl, headers = authHeaders, params = params).text // Use authHeaders
             val myList = parseJson<MyListResponse>(myListResponseText)
 
             if (myList.success == true && myList.data != null) {
@@ -426,26 +425,27 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
 
             try {
                 val requestDlUrl = "https://api.torbox.app/v1/api/torrents/requestdl"
-                // CRITICAL ASSUMPTION: The 'token' parameter for requestdl is the API Key.
-                // This needs verification.
+                // API key will be passed in authHeaders
                 val dlParams = mapOf(
-                    "token" to apiKey,
                     "torrent_id" to torrentId.toString(),
-                    "file_id" to file.id.toString()
+                    "file_id" to file.id.toString(),
+                    "redirect" to "true" // Added redirect=true for permalinks
                 )
-                val dlResponseText = app.get(requestDlUrl, params = dlParams).text // No specific headers mentioned for this one, but API key is via token param
+                val dlResponseText = app.get(requestDlUrl, headers = authHeaders, params = dlParams).text
                 val dlResponse = parseJson<RequestDlResponse>(dlResponseText)
 
-                if ((dlResponse.success == true || dlResponse.success == null) && !dlResponse.url.isNullOrEmpty()) { // success can be null if URL is present
+                // Use dlResponse.data for the URL and check it
+                if (dlResponse.success == true && !dlResponse.data.isNullOrEmpty()) {
+                    val downloadLink = dlResponse.data
                     val quality = getQualityFromString(file.name)
                     callback.invoke(
                         ExtractorLink(
                             source = name, // Provider name
                             name = file.name,
-                            url = dlResponse.url,
+                            url = downloadLink, // Use data field for the URL
                             referer = mainUrl, // Torbox main URL as referer
                             quality = quality.value,
-                            isM3u8 = dlResponse.url.contains(".m3u8", ignoreCase = true)
+                            isM3u8 = downloadLink.contains(".m3u8", ignoreCase = true)
                             // Add other details if available/needed e.g. size
                         )
                     )
