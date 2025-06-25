@@ -5,6 +5,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0") // Or other version
     // implementation("io.ktor:ktor-client-core:2.3.5") // Example, if not using app.get
     // implementation("io.ktor:ktor-client-cio:2.3.5") // Example
+    implementation("androidx.preference:preference-ktx:1.2.1") // Added for PreferenceFragmentCompat
 }
 
 // Use an integer for version numbers
