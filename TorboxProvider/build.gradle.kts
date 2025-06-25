@@ -12,7 +12,6 @@ version = 1
 
 cloudstream {
     // All of these properties are optional, you can safely remove any of them.
-    name = "Torbox" // Added name property
     description = "Integrates with Torbox.app debrid service" // Updated description
     authors = listOf("YourName") // Update author
 
