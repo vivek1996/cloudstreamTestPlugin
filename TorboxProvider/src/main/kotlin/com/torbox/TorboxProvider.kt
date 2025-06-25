@@ -3,7 +3,8 @@ package com.torbox // Changed package name
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLink // Keep this for the class ExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLink // Attempting explicit import
 import com.lagradost.cloudstream3.utils.Qualities
 import android.content.Context
 
@@ -231,9 +232,10 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             TvType.Torrent -> newTorrentSearchResponse(displayTitle, itemUrl, type) {
                 this.posterUrl = null // No poster for torrents usually
                 this.quality = quality
-                this.size = this@toSearchResponse.size
-                this.seeds = this@toSearchResponse.last_known_seeders
-                this.peers = this@toSearchResponse.last_known_peers
+                // TODO: Stubs for TorrentSearchResponse in this env don't seem to have settable size, seeds, peers.
+                // this.size = this@toSearchResponse.size
+                // this.seeds = this@toSearchResponse.last_known_seeders
+                // this.peers = this@toSearchResponse.last_known_peers
             }
             else -> null // Should not happen due to earlier null check
         }
@@ -257,10 +259,10 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
             // We could optionally call /torrentinfo here if we wanted to display files *before* adding,
             // but it's simpler to let loadLinks handle the "add then get files" flow.
             return newTorrentLoadResponse(
-                name = magnetName,
-                url = url, // url for the load response is the magnet uri itself
-                type = TvType.Torrent, // Or infer better from search result if possible to pass more data
-                link = url // The data passed to loadLinks will be the magnet uri
+                magnetName,
+                url, // url for the load response is the magnet uri itself
+                TvType.Torrent.name, // Or infer better from search result if possible to pass more data
+                url // The data passed to loadLinks will be the magnet uri
             )
         } else if (url.startsWith("hash:")) {
             val hash = url.removePrefix("hash:")
@@ -296,18 +298,19 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                 // The 'url' of LoadResponse should be something unique for this item.
                 // Using the magnet link itself is consistent.
                 return newTorrentLoadResponse(
-                    name = torrentName,
-                    url = magnetLink, // Use the constructed magnet link as the identifier/url
-                    type = TvType.Torrent, // Or try to infer better if more info in TorrentInfoData
-                    link = magnetLink // This is what's passed to loadLinks
+                    torrentName,
+                    magnetLink, // Use the constructed magnet link as the identifier/url
+                    TvType.Torrent.name, // Or try to infer better if more info in TorrentInfoData
+                    magnetLink // This is what's passed to loadLinks
                 ) {
                     // Populate other fields if available from torrentInfo
                     // this.posterUrl = ... (if available)
                     // this.year = ... (if available)
                     // this.plot = ...
-                    this.torrentInfo?.size = torrentInfo.size
-                    this.torrentInfo?.seeds = torrentInfo.seeds
-                    this.torrentInfo?.peers = torrentInfo.peers
+                    // TODO: Stubs for TorrentLoadResponse in this env don't seem to have settable size, seeds, peers.
+                    // this.size = torrentInfo.size
+                    // this.seeds = torrentInfo.seeds
+                    // this.peers = torrentInfo.peers
                     // Example of how files could be potentially mapped if LoadResponse supported it directly here
                     // this.episodes = torrentInfo.files?.mapIndexedNotNull { index, file ->
                     //    Episode(
@@ -437,18 +440,13 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                 // Use dlResponse.data for the URL and check it
                 if (dlResponse.success == true && !dlResponse.data.isNullOrEmpty()) {
                     val downloadLink = dlResponse.data
-                    val quality = getQualityFromString(file.name)
-                    callback.invoke(
-                        ExtractorLink(
-                            source = name, // Provider name
-                            name = file.name,
-                            url = downloadLink, // Use data field for the URL
-                            referer = mainUrl, // Torbox main URL as referer
-                            quality = quality.value,
-                            isM3u8 = downloadLink.contains(".m3u8", ignoreCase = true)
-                            // Add other details if available/needed e.g. size
-                        )
-                    )
+                    // val qualityAPI = getQualityFromString(file.name) // Returns SearchQuality? - Not needed if quality isn't set
+                    // val currentQuality = qualityAPI?.ordinal ?: Qualities.Unknown.ordinal
+                    newExtractorLink(
+                        source = this.name,
+                        name = file.name,
+                        url = downloadLink
+                    ).let { callback.invoke(it) }
                     linksFound = true
                 } else {
                     // Log or notify: "Failed to get download link for file ${file.name}: ${dlResponse.message ?: dlResponse.error}"
