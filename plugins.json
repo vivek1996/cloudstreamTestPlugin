@@ -1,0 +1,23 @@
+[
+    {
+        "iconUrl": "https://torbox.app/favicon.ico",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/vivek1996/cloudstreamTestPlugin",
+        "fileSize": 33216,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "YourName"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Torrent"
+        ],
+        "version": 1,
+        "internalName": "TorboxProvider",
+        "description": "Integrates with Torbox.app debrid service",
+        "url": "https://raw.githubusercontent.com/vivek1996/cloudstreamTestPlugin/builds/TorboxProvider.cs3",
+        "name": "TorboxProvider"
+    }
+]
