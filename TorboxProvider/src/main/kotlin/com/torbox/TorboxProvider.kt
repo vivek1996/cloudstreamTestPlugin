@@ -7,6 +7,10 @@ import com.lagradost.cloudstream3.utils.ExtractorLink // Keep this for the class
 import com.lagradost.cloudstream3.utils.newExtractorLink // Attempting explicit import
 import com.lagradost.cloudstream3.utils.Qualities
 import android.content.Context
+import android.widget.Toast
+import com.lagradost.cloudstream3.CommonActivity.showToast
+import kotlinx.coroutines.delay
+import android.util.Log
 
 class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class name, added plugin constructor
     override var mainUrl = "https://torbox.app" // Updated mainUrl
@@ -112,7 +116,9 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
         val success: Boolean?,
         val data: List<MyListItem>?, // Assuming it's a list. API docs say "get my torrent list"
                                      // The actual structure of items in 'data' needs to be inferred or found in more detailed docs
-        val message: String?
+        val message: String?,
+        val error: String?,
+        val detail: String?
     )
     data class MyListItemFile( // Structure for files within a torrent in mylist
         val id: Int?, // Crucial: file_id for requestdl
@@ -154,13 +160,12 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
 
     // This function gets called when you search for something
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d("TorboxProvider", "search called with query: $query")
         val apiKey = getApiKey()
         if (apiKey.isNullOrEmpty()) {
-            // Optionally, notify the user that API key is missing.
-            // For now, just return empty list or throw an error.
-            // plugin.activity?.runOnUiThread {
-            //     CommonActivity.showToast(plugin.activity, "Torbox API Key is not set", Toast.LENGTH_LONG)
-            // }
+            plugin.activity?.runOnUiThread {
+                showToast(plugin.activity, "Torbox API Key is not set", Toast.LENGTH_LONG)
+            }
             return emptyList()
         }
 
@@ -177,23 +182,24 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
 
         return try {
             val response = app.get(searchUrl, params = params, headers = headers).text
+            Log.d("TorboxProvider", "search response: $response")
             val torboxResponse = parseJson<TorboxSearchResponse>(response)
 
             if (torboxResponse.success) {
-                torboxResponse.data?.nzbs?.mapNotNull { it.toSearchResponse() } ?: emptyList()
+                val searchResults = torboxResponse.data?.nzbs?.mapNotNull { it.toSearchResponse() } ?: emptyList()
+                Log.d("TorboxProvider", "search results: $searchResults")
+                searchResults
             } else {
-                // Log error or notify user
-                // plugin.activity?.runOnUiThread {
-                //     CommonActivity.showToast(plugin.activity, "Torbox search error: ${torboxResponse.message}", Toast.LENGTH_LONG)
-                // }
+                plugin.activity?.runOnUiThread {
+                    showToast(plugin.activity, "Torbox search error: ${torboxResponse.message}", Toast.LENGTH_LONG)
+                }
                 emptyList()
             }
         } catch (e: Exception) {
-            // Log error or notify user
-            // e.printStackTrace()
-            // plugin.activity?.runOnUiThread {
-            //    CommonActivity.showToast(plugin.activity, "Failed to fetch from Torbox: ${e.message}", Toast.LENGTH_LONG)
-            // }
+            Log.e("TorboxProvider", "search error", e)
+            plugin.activity?.runOnUiThread {
+               showToast(plugin.activity, "Failed to fetch from Torbox: ${e.message}", Toast.LENGTH_LONG)
+            }
             emptyList()
         }
     }
@@ -242,9 +248,12 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d("TorboxProvider", "load called with url: $url")
         val apiKey = getApiKey()
         if (apiKey.isNullOrEmpty()) {
-            // Notify user or log
+            plugin.activity?.runOnUiThread {
+                showToast(plugin.activity, "Torbox API Key is not set", Toast.LENGTH_LONG)
+            }
             return null
         }
 
@@ -272,6 +281,7 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
 
             try {
                 val response = app.get(torrentInfoUrl, params = params, headers = authHeaders).text // Use authHeaders
+                Log.d("TorboxProvider", "load (torrentinfo) response: $response")
                 // The openapi.json for /v1/api/torrents/torrentinfo doesn't specify response schema.
                 // Assuming it's similar to TorboxTorrentInfoResponse or directly TorrentInfoData
                 // Let's try parsing as TorrentInfoData first, if it's nested under "data", adjust.
@@ -281,10 +291,9 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                 val torrentInfo = apiResponse.data
 
                 if (apiResponse.success != true || torrentInfo == null) {
-                    // Log error from apiResponse.error or apiResponse.detail
-                    // plugin.activity?.runOnUiThread {
-                    //     CommonActivity.showToast(plugin.activity, "Torbox torrent info error: ${apiResponse.error ?: apiResponse.detail}", Toast.LENGTH_LONG)
-                    // }
+                    plugin.activity?.runOnUiThread {
+                        showToast(plugin.activity, "Torbox torrent info error: ${apiResponse.error ?: apiResponse.detail}", Toast.LENGTH_LONG)
+                    }
                     return null // Failed to get info or critical info missing
                 }
 
@@ -324,11 +333,10 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                     // }
                 }
             } catch (e: Exception) {
-                // Log network or parsing error for /torrentinfo
-                // e.printStackTrace()
-                // plugin.activity?.runOnUiThread {
-                //    CommonActivity.showToast(plugin.activity, "Failed to fetch torrent info from Torbox: ${e.message}", Toast.LENGTH_LONG)
-                // }
+                Log.e("TorboxProvider", "load (torrentinfo) error", e)
+                plugin.activity?.runOnUiThread {
+                   showToast(plugin.activity, "Failed to fetch torrent info from Torbox: ${e.message}", Toast.LENGTH_LONG)
+                }
                 return null
             }
         }
@@ -341,9 +349,12 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d("TorboxProvider", "loadLinks called with data: $data")
         val apiKey = getApiKey()
         if (apiKey.isNullOrEmpty()) {
-            // Log or notify: API key missing
+            plugin.activity?.runOnUiThread {
+                showToast(plugin.activity, "Torbox API Key is not set", Toast.LENGTH_LONG)
+            }
             return false
         }
         val authHeaders = getAuthHeaders(apiKey) // Use authHeaders
@@ -366,66 +377,101 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                 headers = authHeaders, // Use authHeaders
                 json = requestBody // Sending as JSON
             ).text
-
+            Log.d("TorboxProvider", "asynccreatetorrent response: $responseText")
             val createResponse = parseJson<AsyncCreateTorrentResponse>(responseText)
 
             if (createResponse.success != true && createResponse.data?.id == null) {
-                var errorMsg = createResponse.message ?: createResponse.data?.error ?: createResponse.data?.detail ?: "Failed to add torrent"
-                // Log or notify: errorMsg
+                val errorMsg = createResponse.message ?: createResponse.data?.error ?: createResponse.data?.detail ?: "Failed to add torrent"
+                plugin.activity?.runOnUiThread {
+                    showToast(plugin.activity, "Failed to add torrent: $errorMsg", Toast.LENGTH_LONG)
+                }
                 return false
             }
             torrentId = createResponse.data?.id
             if (torrentId == null) {
-                 // Log or notify: "Torrent added but ID not found in response"
+                plugin.activity?.runOnUiThread {
+                    showToast(plugin.activity, "Torrent added but ID not found in response", Toast.LENGTH_LONG)
+                }
                 return false
             }
+            Log.d("TorboxProvider", "Torrent added with ID: $torrentId")
         } catch (e: Exception) {
-            // Log or notify: "Error adding torrent to Torbox: ${e.message}"
+            Log.e("TorboxProvider", "asynccreatetorrent error", e)
+            plugin.activity?.runOnUiThread {
+                showToast(plugin.activity, "Error adding torrent to Torbox: ${e.message}", Toast.LENGTH_LONG)
+            }
             return false
         }
 
-        // 2. Get torrent status and files using /mylist (potentially poll)
-        // For simplicity, we'll try once. Real-world might need polling or delay.
+        // 2. Get torrent status and files using /mylist (with polling)
         var torrentDetails: MyListItem? = null
-        try {
-            // Delay briefly to allow Torbox to process the async add, if necessary.
-            // kotlinx.coroutines.delay(5000) // Example: 5 second delay - requires coroutine context
+        val maxRetries = 5
+        val delayMillis = 5000L
 
-            val myListUrl = "https://api.torbox.app/v1/api/torrents/mylist"
-            val params = mapOf("id" to torrentId.toString()) // Filter by our torrent ID
-            val myListResponseText = app.get(myListUrl, headers = authHeaders, params = params).text // Use authHeaders
-            val myList = parseJson<MyListResponse>(myListResponseText)
+        for (i in 1..maxRetries) {
+            Log.d("TorboxProvider", "Polling mylist, attempt $i")
+            try {
+                val myListUrl = "https://api.torbox.app/v1/api/torrents/mylist"
+                val params = mapOf("id" to torrentId.toString()) // Filter by our torrent ID
+                val myListResponseText = app.get(myListUrl, headers = authHeaders, params = params).text // Use authHeaders
+                Log.d("TorboxProvider", "mylist response: $myListResponseText")
+                val myList = parseJson<MyListResponse>(myListResponseText)
 
-            if (myList.success == true && myList.data != null) {
-                torrentDetails = myList.data.firstOrNull { it.id == torrentId }
-            }
-            if (torrentDetails == null) {
-                // Log or notify: "Torrent not found in user's list after adding, or error fetching list."
+                if (myList.success == true && myList.data != null) {
+                    torrentDetails = myList.data.firstOrNull { it.id == torrentId }
+                }
+
+                if (torrentDetails != null) {
+                    Log.d("TorboxProvider", "Torrent status: ${torrentDetails.status}")
+                    // If status is completed, cached, or downloading, we can proceed
+                    if (torrentDetails.status in listOf("completed", "cached", "downloading")) {
+                        break // Exit loop and proceed to get links
+                    }
+                    // If there's an error, stop polling
+                    if (torrentDetails.status == "error" || torrentDetails.error_message != null) {
+                        plugin.activity?.runOnUiThread {
+                            showToast(plugin.activity, "Torrent has error: ${torrentDetails.error_message}", Toast.LENGTH_LONG)
+                        }
+                        return false
+                    }
+                } else {
+                    val error = myList.error ?: myList.detail ?: myList.message ?: "Unknown error"
+                    plugin.activity?.runOnUiThread {
+                        showToast(plugin.activity, "Torrent not found in user's list after adding: $error", Toast.LENGTH_LONG)
+                    }
+                    return false
+                }
+
+                // If not ready, wait before retrying
+                if (i < maxRetries) {
+                    delay(delayMillis)
+                }
+
+            } catch (e: Exception) {
+                Log.e("TorboxProvider", "mylist error", e)
+                plugin.activity?.runOnUiThread {
+                    showToast(plugin.activity, "Error fetching torrent details from Torbox: ${e.message}", Toast.LENGTH_LONG)
+                }
                 return false
             }
-            // Check torrentDetails.status - e.g. "completed", "cached", "downloading"
-            // If "error", "stalled", etc. then fail or handle appropriately
-            if (torrentDetails.status == "error" || torrentDetails.error_message != null) {
-                // Log or notify: "Torrent has error: ${torrentDetails.error_message}"
-                return false
-            }
-            // If not yet ready (e.g. still downloading and not file is marked streamable soon),
-            // we might need to inform the user or implement polling.
-            // For now, proceed if files are listed.
+        }
 
-        } catch (e: Exception) {
-            // Log or notify: "Error fetching torrent details from Torbox: ${e.message}"
+        if (torrentDetails == null || torrentDetails.status !in listOf("completed", "cached", "downloading")) {
+            plugin.activity?.runOnUiThread {
+                showToast(plugin.activity, "Torrent not ready after multiple attempts. Last status: ${torrentDetails?.status}", Toast.LENGTH_LONG)
+            }
             return false
         }
+        Log.d("TorboxProvider", "Torrent ready, proceeding to get links")
 
         // 3. For each file, get a streamable link using /requestdl
         var linksFound = false
         torrentDetails.files?.forEach { file ->
             if (file.id == null || file.name == null) {
-                // Log: "File ID or name is null, skipping"
+                Log.w("TorboxProvider", "File ID or name is null, skipping")
                 return@forEach // continue to next file
             }
-
+            Log.d("TorboxProvider", "Requesting DL for file: ${file.name}")
             try {
                 val requestDlUrl = "https://api.torbox.app/v1/api/torrents/requestdl"
                 // API key will be passed in authHeaders
@@ -435,11 +481,13 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                     "redirect" to "true" // Added redirect=true for permalinks
                 )
                 val dlResponseText = app.get(requestDlUrl, headers = authHeaders, params = dlParams).text
+                Log.d("TorboxProvider", "requestdl response for ${file.name}: $dlResponseText")
                 val dlResponse = parseJson<RequestDlResponse>(dlResponseText)
 
                 // Use dlResponse.data for the URL and check it
                 if (dlResponse.success == true && !dlResponse.data.isNullOrEmpty()) {
                     val downloadLink = dlResponse.data
+                    Log.d("TorboxProvider", "Got download link for ${file.name}: $downloadLink")
                     // val qualityAPI = getQualityFromString(file.name) // Returns SearchQuality? - Not needed if quality isn't set
                     // val currentQuality = qualityAPI?.ordinal ?: Qualities.Unknown.ordinal
                     newExtractorLink(
@@ -449,10 +497,16 @@ class TorboxProvider(val plugin: TorboxPlugin) : MainAPI() { // Changed class na
                     ).let { callback.invoke(it) }
                     linksFound = true
                 } else {
-                    // Log or notify: "Failed to get download link for file ${file.name}: ${dlResponse.message ?: dlResponse.error}"
+                    val error = dlResponse.error ?: dlResponse.detail ?: "Unknown error"
+                    plugin.activity?.runOnUiThread {
+                        showToast(plugin.activity, "Failed to get download link for file ${file.name}: $error", Toast.LENGTH_LONG)
+                    }
                 }
             } catch (e: Exception) {
-                // Log or notify: "Error getting download link for file ${file.name}: ${e.message}"
+                Log.e("TorboxProvider", "requestdl error for ${file.name}", e)
+                plugin.activity?.runOnUiThread {
+                    showToast(plugin.activity, "Error getting download link for file ${file.name}: ${e.message}", Toast.LENGTH_LONG)
+                }
             }
         }
 
